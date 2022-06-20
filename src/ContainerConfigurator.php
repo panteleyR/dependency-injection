@@ -4,14 +4,15 @@ declare(strict_types=1);
 
 namespace Lilith\DependencyInjection;
 
-use Lilith\DependencyInjection\YamlParser\Parser;
-use Lilith\DependencyInjection\YamlParser\Yaml;
+use Symfony\Component\Yaml\Parser;
+use Symfony\Component\Yaml\Yaml;
 
 class ContainerConfigurator implements ContainerConfiguratorInterface
 {
     protected array $parameters = [];
     protected array $packages = [];
     protected array $services = [];
+    protected array $serviceProviders = [];
 
     public function import(string $path, string $type = null): void
     {
@@ -20,18 +21,15 @@ class ContainerConfigurator implements ContainerConfiguratorInterface
 
         foreach ($configFilePathList as $configFilePath) {
             $configTree = $parser->parseFile($configFilePath, Yaml::PARSE_CONSTANT | Yaml::PARSE_CUSTOM_TAGS);
+            $this->parameters = $configTree['parameters'] ?? [] + $this->parameters;
 
-//            if (isset($configTree['imports'])) {
-//                foreach ($configTree['imports'] as $importingPath){
-//                    $this->import($importingPath);
-//                }
-//            }
-
-            $this->parameters = $configTree['parameters'] + $this->parameters;
-            foreach ($configTree['services'] as $serviceId => $serviceConfig) {
+            foreach ($configTree['services'] ?? [] as $serviceId => $serviceConfig) {
                 $this->services[] = [$serviceId, $serviceConfig];
             }
-            $this->services = $configTree['services'] + $this->services;
+
+            foreach ($configTree['service_providers'] ?? [] as $serviceProvider) {
+                $this->serviceProviders[] = $serviceProvider;
+            }
         }
     }
 
@@ -51,35 +49,6 @@ class ContainerConfigurator implements ContainerConfiguratorInterface
         }
     }
 
-    protected function parseFile(string $path, Parser $parser): array
-    {
-        $configTree = $parser->parseFile($path, Yaml::PARSE_CONSTANT | Yaml::PARSE_CUSTOM_TAGS);
-//@TODO Сделать импорт
-//        if (isset($configTree['import'])) {
-//            foreach ($configTree['import'] as $importingPackagePath){
-//                $importedConfigTree = $this->parseFile($importingPackagePath, $parser);
-//                $configTree = $configTree + $importedConfigTree;
-//            }
-//        }
-
-        return $configTree;
-    }
-
-    public function compile(string $path): void
-    {
-
-    }
-
-    public function compilePackage(string $path): void
-    {
-
-    }
-
-    public function addParameters(array $parameters): void
-    {
-        $this->parameters = $parameters + $this->parameters;
-    }
-
     public function getParameters(): array
     {
         return $this->parameters;
@@ -95,12 +64,8 @@ class ContainerConfigurator implements ContainerConfiguratorInterface
         return $this->services;
     }
 
-    public function show(): array
+    public function getServiceProviders(): array
     {
-        return [
-            'packages' => $this->getPackages(),
-            'parameters' => $this->getParameters(),
-            'services' => $this->getServices(),
-        ];
+        return $this->serviceProviders;
     }
 }

@@ -9,16 +9,11 @@ class ContainerBuilder implements ContainerBuilderInterface
     protected array $parameters = [];
     protected array $packages = [];
     protected array $services = [];
+    protected array $serviceProviders = [];
     protected array $aliases = [];
 
-    public function build(ContainerConfiguratorInterface $containerConfigurator): ContainerInterface
+    public function build(ContainerInterface $container): void
     {
-        $container = new Container();
-
-        $this->addPackages($containerConfigurator->getPackages());
-        $this->addParameters($containerConfigurator->getParameters());
-        $this->addServices($containerConfigurator->getServices());
-
         foreach ($this->parameters as $name => $value) {
             $container->setParameter($name, $value);
         }
@@ -33,83 +28,144 @@ class ContainerBuilder implements ContainerBuilderInterface
             $this->make($container, $serviceConfig);
         }
 
-        return $container;
-    }
+        $container->setAliases($this->aliases);
+        $container->setAliases(['container' => $container::class, ContainerInterface::class => $container::class]);
+        $container->set($container::class, $container);
 
-    protected function make(Container $container, array $serviceConfig): void
-    {
-        if (is_array($serviceConfig)) {
-            $object = $serviceConfig['class'] ?? '';
-            $calls = $serviceConfig['calls'] ?? [];
-            $arguments = $serviceConfig['arguments'] ?? [];
-
-            $ref = new \ReflectionClass($object);
-            $parameters = $ref->getConstructor()->getParameters();
-            $args = [];
-
-            foreach ($parameters as $parameter) {
-                if (isset($arguments[$parameter->getName()])) {
-                    $args[] = $arguments[$parameter->getName()];
-                    break;
-                }
-
-                $argType = $parameter->getType()->getName();
-                $serviceId = $this->aliases[$argType] ?? null;
-
-                if (false === $container->has($serviceId)) {
-                    $this->make($container, $this->services[$serviceId]);
-                }
-
-                $args[] = $container->get($serviceId);
-            }
-
-            $releaseObject =  new $object(...$args);
-            $container->set($object, $releaseObject);
-
-            foreach ($calls as $method => $call) {
-                $callsArg = $container->get($call);
-                $releaseObject->{$method}($callsArg);
-            }
-        } else {
-            $object = $serviceConfig;
-            $ref = new \ReflectionClass($object);
-            $parameters = $ref->getConstructor()->getParameters();
-            $args = [];
-
-            foreach ($parameters as $parameter) {
-                $argType = $parameter->getType()->getName();
-                $serviceId = $this->aliases[$argType];
-
-                if (false === $container->has($serviceId)) {
-                    $this->make($container, $this->services[$serviceId]);
-                }
-
-                $args[] = $container->get($serviceId);
-            }
-
-            $container->set($object, (new $object(...$args)));
+        foreach ($this->serviceProviders as $serviceProvider) {
+            $this->make($container, $serviceProvider);
         }
     }
+
+    protected function make(Container $container, Definition $serviceConfig): void
+    {
+        $serviceClass = $serviceConfig->getClass();
+        $ref = new \ReflectionClass($serviceClass);
+        $parameters = $ref->getConstructor()?->getParameters() ?? [];
+        $args = [];
+        foreach ($parameters as $parameter) {
+            if (isset($serviceConfig->getArguments()[$parameter->getName()])) {
+                $args[] = $serviceConfig->getArguments()[$parameter->getName()];
+                break;
+            }
+
+            $argType = $parameter->getType()->getName();
+            $serviceId = $this->aliases[$argType];
+
+            if (false === $container->has($serviceId)) {
+                $this->make($container, $this->services[$serviceId]);
+            }
+
+            $args[] = $container->get($serviceId);
+        }
+
+        $serviceObject = new $serviceClass(...$args);
+        $container->set($serviceClass, $serviceObject);
+
+        foreach ($serviceConfig->getCalls() as $call) {
+            if (is_array($call)) {
+                $method = key($call);
+                $class = current($call);
+            } else {
+                $method = $call;
+                $callsArgs = $ref->getMethod($method)?->getParameters();
+                foreach ($callsArgs as $callsArg) {
+                    if (false === $container->has($class)) {
+                        $this->make($container, $this->services[$class]);
+                    }
+                    $class = $container->get($callsArg->getType()->getName());
+                }
+            }
+
+            $serviceObject->{$method}($class);
+        }
+    }
+//
+//    protected function make(Container $container, string|array $serviceConfig): void
+//    {
+//        if (is_array($serviceConfig)) {
+//            $object = $serviceConfig['class'] ?? '';
+//            $calls = $serviceConfig['calls'] ?? [];
+//            $arguments = $serviceConfig['arguments'] ?? [];
+//
+//            $ref = new \ReflectionClass($object);
+//            $parameters = $ref->getConstructor()->getParameters();
+//            $args = [];
+//
+//            foreach ($parameters as $parameter) {
+//                if (isset($arguments[$parameter->getName()])) {
+//                    $args[] = $arguments[$parameter->getName()];
+//                    break;
+//                }
+//
+//                $argType = $parameter->getType()->getName();
+//                $serviceId = $this->aliases[$argType] ?? null;
+//
+//                if (false === $container->has($serviceId)) {
+//                    $this->make($container, $this->services[$serviceId]);
+//                }
+//
+//                $args[] = $container->get($serviceId);
+//            }
+//
+//            $releaseObject =  new $object(...$args);
+//            $container->set($object, $releaseObject);
+//
+//            foreach ($calls as $method => $call) {
+//                $callsArg = $container->get($call);
+//                $releaseObject->{$method}($callsArg);
+//            }
+//        } else {
+//            $object = $serviceConfig;
+//            $ref = new \ReflectionClass($object);
+//            $parameters = $ref->getConstructor()?->getParameters() ?? [];
+//            $args = [];
+//
+//            foreach ($parameters as $parameter) {
+//                $argType = $parameter->getType()->getName();
+//                $serviceId = $this->aliases[$argType];
+//
+//                if (false === $container->has($serviceId)) {
+//                    $this->make($container, $this->services[$serviceId]);
+//                }
+//
+//                $args[] = $container->get($serviceId);
+//            }
+//
+//            $container->set($object, (new $object(...$args)));
+//        }
+//    }
 
     public function register(array $serviceConfig): void
     {
         if (isset($serviceConfig[1]['resource'])) {
             $resource = $serviceConfig[1]['resource'];
-            $services = $this->getFiles($resource, $serviceConfig[0]);
-            $exclude = $serviceConfig[1]['exclude'] ?? null;
+            $exclude = $serviceConfig[1]['exclude'] ?? [];
 
-            if ($exclude !== $exclude) {
-                $exclude = $this->getFiles($serviceConfig[1]['exclude'], $serviceConfig[0]);
-                $services = array_filter($services, fn (string $item) => false === in_array($item, $exclude, true));
+            if ([] !== $exclude) {
+                $exclude = glob(getcwd() . $exclude, GLOB_BRACE);
             }
 
+            $services = $this->getFiles($resource, $serviceConfig[0], $exclude);
+
             foreach ($services as $service) {
-                $this->aliases[$service] = $service;
-                $this->services[$service] = [$service, $service];
+                $this->services[$service] = new Definition($service);
             }
 
             return;
         }
+
+        if (is_array($serviceConfig[1])) {
+            $definition = new Definition(
+                $serviceConfig[1]['class'] ?? $serviceConfig[0],
+                $serviceConfig[1]['arguments'] ?? [],
+                $serviceConfig[1]['calls'] ?? [],
+            );
+        } else {
+            $definition = new Definition($serviceConfig[1]);
+        }
+
+        $this->services[$definition->getClass()] = $definition;
 
         if (is_string($serviceConfig[0])) {
             $aliases = [$serviceConfig[0]];
@@ -117,32 +173,28 @@ class ContainerBuilder implements ContainerBuilderInterface
             $aliases = $serviceConfig[0];
         }
 
-        if (is_array($serviceConfig[1])) {
-            $object = $serviceConfig[1]['class'] ?? $aliases[0];
-            $serviceConfig[1]['class'] = $object;
-        } else {
-            $object = $serviceConfig[1];
-        }
-
         foreach ($aliases as $alias) {
-            $this->aliases[$alias] = $object;
+            $this->aliases[$alias] = $definition->getClass();
         }
-
-        $this->services[$object] = $serviceConfig;
     }
 
-    public function getFiles(string $path, string $namespace): array
+    public function getFiles(string $path, string $namespace, array $exclude): array
     {
         $list = [];
-        $recursiveDir = new \DirectoryIterator($path);
+        $recursiveDir = new \DirectoryIterator(getcwd() . $path);
 
         foreach ($recursiveDir as $item) {
-            if($item->isDir()) {
+            if ($item->isDir()) {
                 if (false === in_array($item->getBasename(), ['.', '..'], true)) {
-                    $list = $list + $this->getFiles($path . '/' . $item->getBasename(), $namespace . '\\' . $item->getBasename());
+                    $recursiveDir = $this->getFiles(
+                        $path . '/' . $item->getBasename(),
+                        $namespace . '\\' . $item->getBasename(),
+                        $exclude,
+                    );
+                    array_push($list, ...$recursiveDir);
                 }
             } else {
-                if ($item->getExtension() === 'php') {
+                if ($item->getExtension() === 'php' && false === in_array($item->getRealPath(), $exclude, true)) {
                     $className = $item->getBasename('.php');
                     $class = $namespace . '\\' . $className;
                     $list[] = $class;
@@ -151,13 +203,6 @@ class ContainerBuilder implements ContainerBuilderInterface
         }
 
         return $list;
-    }
-
-    protected function getServiceArgs(string $object): array
-    {
-        $argClass = '';
-
-        return [];
     }
 
     public function addPackages(array $packages): void
@@ -170,11 +215,17 @@ class ContainerBuilder implements ContainerBuilderInterface
         $this->parameters = $parameters + $this->parameters;
     }
 
+    public function addServiceProviders(array $serviceProviders): void
+    {
+        foreach ($serviceProviders as $serviceProvider) {
+            $this->serviceProviders[] = new Definition($serviceProvider);
+        }
+    }
+
     public function addServices(array $services): void
     {
         foreach ($services as $service) {
             $this->register($service);
         }
-//        $this->services = $services + $this->services;
     }
 }

@@ -11,5 +11,5 @@ interface ContainerConfiguratorInterface
     public function getParameters(): array;
     public function getPackages(): array;
     public function getServices(): array;
-    public function show(): array;
+    public function getServiceProviders(): array;
 }

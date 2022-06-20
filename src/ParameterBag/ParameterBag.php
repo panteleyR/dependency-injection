@@ -33,6 +33,11 @@ class ParameterBag implements ParameterBagInterface
     public function get(string $name): array|bool|string|int|float|\UnitEnum|null
     {
         $parameters = $this->parameters;
+
+        if (null === $parameters[$name]) {
+            return null;
+        }
+
         $result = $parameters[$name] ?? false;
 
         if (false === $result) {
@@ -67,7 +72,9 @@ class ParameterBag implements ParameterBagInterface
     public function resolve(): void
     {
         foreach ($this->parameters as $name => $value) {
-            $this->resolveValue($this->parameters[$name]);
+            if (null !== $this->parameters[$name]) {
+                $this->resolveValue($this->parameters[$name]);
+            }
         }
     }
 

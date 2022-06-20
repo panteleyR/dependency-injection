@@ -11,24 +11,18 @@ class Container implements ContainerInterface
 {
     protected ParameterBagInterface $parameterBag;
     protected array $services = [];
-//    protected $privates = [];
-//    protected $fileMap = [];
-//    protected $methodMap = [];
     protected array $factories = [];
     protected array $aliases = [];
-//    protected $loading = [];
-    protected $resolving = [];
-
 
     public function __construct(ParameterBagInterface $parameterBag = null)
     {
         $this->parameterBag = $parameterBag ?? new ParameterBag();
     }
 
-//    public function import(string $path): void
-//    {
-//
-//    }
+    public function getAll(): array
+    {
+        return [$this->services, $this->aliases];
+    }
 
     public function getParameter(string $name): array|bool|string|int|float|\UnitEnum|null
     {
@@ -40,9 +34,14 @@ class Container implements ContainerInterface
         return $this->parameterBag->has($name);
     }
 
-    public function setParameter(string $name, array|bool|string|int|float|\UnitEnum|null $value)
+    public function setParameter(string $name, array|bool|string|int|float|\UnitEnum|null $value): void
     {
         $this->parameterBag->set($name, $value);
+    }
+
+    public function setAliases(array $aliases): void
+    {
+        $this->aliases = $aliases + $this->aliases;
     }
 
     public function compile(): void
@@ -60,7 +59,7 @@ class Container implements ContainerInterface
     public function set(string $id, null|object $service): void
     {
         if (isset($this->services[$id])) {
-//            throw new InvalidArgumentException(sprintf('The "%s" service is already initialized, you cannot replace it.', $id));
+            throw new \Exception(sprintf('The "%s" service is already initialized, you cannot replace it.', $id));
         }
 
         if (isset($this->aliases[$id])) {
